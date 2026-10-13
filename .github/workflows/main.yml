@@ -25,9 +25,18 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Instalar componentes Android
+        shell: bash
         run: |
-          sdkmanager --licenses || true
-          sdkmanager \
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::No se encontró sdkmanager."
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
@@ -36,34 +45,53 @@ jobs:
         shell: bash
         run: |
           if [ ! -f "stream1.zip" ]; then
-            echo "::error::No se encontró stream1.zip en la raíz."
+            echo "::error::No se encontró stream1.zip en la raíz del repositorio."
             exit 1
           fi
 
           mkdir -p stream1_source
           unzip -o stream1.zip -d stream1_source
 
-          echo "Contenido del ZIP:"
+          echo "Contenido del proyecto:"
           ls -la stream1_source
+
+      - name: Localizar proyecto Android
+        shell: bash
+        run: |
+          PROJECT_DIR="stream1_source"
+
+          if [ ! -f "$PROJECT_DIR/gradlew" ] && [ ! -f "$PROJECT_DIR/settings.gradle" ] && [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+            FOUND="$(find stream1_source -type f \( -name gradlew -o -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+
+            if [ -n "$FOUND" ]; then
+              PROJECT_DIR="$(dirname "$FOUND")"
+            fi
+          fi
+
+          echo "Proyecto localizado en: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          if [ ! -f "$PROJECT_DIR/settings.gradle" ] && [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+            echo "::error::No se encontró settings.gradle ni settings.gradle.kts."
+            exit 1
+          fi
 
       - name: Compilar APK
         shell: bash
         run: |
-          cd stream1_source
+          cd "$PROJECT_DIR"
 
           if [ -f "gradlew" ]; then
             chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon
-          elif [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            gradle assembleDebug --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace
           else
-            echo "::error::No se encontró el proyecto Gradle en la raíz del ZIP."
-            exit 1
+            gradle assembleDebug --no-daemon --stacktrace
           fi
 
       - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
           name: Stream1-APK
-          path: stream1_source/**/build/outputs/apk/debug/*.apk
+          path: |
+            stream1_source/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
